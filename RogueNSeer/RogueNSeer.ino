@@ -10,6 +10,14 @@
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 
+// Frequencies of notes (in Hz)
+// From: https://en.wikipedia.org/wiki/Piano_key_frequencies
+#define KEY_C 262  // 261.6256 Hz (middle C)
+#define KEY_D 294  // 293.6648 Hz
+#define KEY_E 330  // 329.6276 Hz
+#define KEY_F 350  // 349.2282 Hz
+#define KEY_G 392  // 391.9954 Hz
+
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
 // The pins for I2C are defined by the Wire-library. 
 // On an arduino UNO:       A4(SDA), A5(SCL)
@@ -20,11 +28,14 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // --------------------------------------------------------------------------
 
+// Speaker constants
+const int OUTPUT_PIEZO_PIN = 12;
+
 // Button constants
 const int SHIELD_BUTTON_PIN = 10;
 
 // Vibromotor constants
-const int VIBROMOTOR_OUTPUT_PIN = 5;
+const int VIBROMOTOR_OUTPUT_PIN = 6;
 const int MAX_ANALOG_OUT = 255;
 
 // Earthquake constants
@@ -61,7 +72,9 @@ const int R_PARTIAL_OFFSET = (R_OFFSET * 7) / 10; // approximating 0.7x for sqrt
 
 enum GAME_STATE {
   START,
+  PLAYSTART,
   PLAY,
+  GAMEOVER,
   HELP
 };
 
@@ -78,6 +91,7 @@ GAME_STATE _curState = START;
 */
 int _attackStates[ATTACK_COUNT];
 int _earthquakeState;
+int _score;
 
 void setup() {
   // The following OLED setup taken from the ssd1306_128x64_i2c library example
@@ -92,29 +106,84 @@ void setup() {
   // --------------------------------------------------------------------------
 
   pinMode(VIBROMOTOR_OUTPUT_PIN, OUTPUT);
+  pinMode(OUTPUT_PIEZO_PIN, OUTPUT);
   pinMode(SHIELD_BUTTON_PIN, INPUT_PULLUP);
   
-  for (int i = 0; i<ATTACK_COUNT; i++) {
-    _attackStates[i] = 1000;
-  }
-  _earthquakeState = 1000;
+  gameReset();
   display.clearDisplay();
 }
 
 void loop() {
   display.clearDisplay();
 
-  display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE); // draw game border
+  if (_curState == PLAY) {
+    playScreen();
+  } else if (_curState == PLAYSTART) {
+    playstartScreen();
+  } else if (_curState == START) {
+    startScreen();
+  } else if (_curState == GAMEOVER) {
+    gameoverScreen();
+  } else if (_curState == HELP) {
+    helpScreen();
+  }
+  
+  display.display();
+}
 
-  Serial.print(_attackStates[0]);
-  Serial.print(" ");
-  Serial.print(_attackStates[1]);
-  Serial.print(" ");
-  Serial.print(_attackStates[2]);
-  Serial.print(" ");
-  Serial.print(_attackStates[3]);
-  Serial.print(" ");
-  Serial.println(_earthquakeState);
+void startScreen() {
+  int16_t x1, y1, x2, y2;
+  uint16_t textWidth1, textHeight1, textWidth2, textHeight2;
+  char title1[] = "ROGUE";
+  char title2[] = "& SEER";
+
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.getTextBounds(title1, 0, 0, &x1, &y1, &textWidth1, &textHeight1);
+  display.getTextBounds(title2, 0, 0, &x2, &y2, &textWidth2, &textHeight2);
+
+  display.setCursor(SCREEN_WIDTH / 2 - textWidth2 / 2, SCREEN_HEIGHT / 2 - textHeight2 / 2);
+  display.print(title2);
+  display.setCursor(SCREEN_WIDTH / 2 - textWidth1 / 2, SCREEN_HEIGHT / 2 - textHeight2 / 2 - textHeight1);
+  display.println(title1);
+
+  drawBottomRightText("Start");
+
+  if (!_shieldButton.isActive()) {
+    _curState = PLAYSTART;
+  }
+}
+
+void playstartScreen() {
+  _score = 0;
+  display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE); // draw game border
+  display.display();
+  delay(500);
+  for (int i = 0; i < 3; i++) {
+    display.clearDisplay();
+    drawRogue(X_CENTER, Y_CENTER, true);
+    display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE);
+    display.display();
+    tone(OUTPUT_PIEZO_PIN, KEY_E);
+    delay(500);
+    display.clearDisplay();
+    display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE);
+    display.display();
+    noTone(OUTPUT_PIEZO_PIN);
+    delay(500);
+  }
+  display.clearDisplay();
+  drawRogue(X_CENTER, Y_CENTER, true);
+  display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE);
+  drawScore();
+  display.display();
+  delay(1000);
+  _curState = PLAY;
+}
+
+void playScreen() {
+  display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE); // draw game border
+  
   int i = 0;
   while (i <= 3) {
     if (_attackStates[i] < ATTACK_END) {
@@ -134,7 +203,6 @@ void loop() {
       _attackStates[j] = 0;
     }
   }
-  Serial.println(i);
 
   _analogJoystick.read();
   int rogueUpDown = 0;
@@ -152,16 +220,46 @@ void loop() {
     rogueLeftRight = -1;
   }
   updateEarthquake(10);
-  updateRogue(rogueUpDown, rogueLeftRight);
   if (!_shieldButton.isActive()) {
     drawShield();
   }
+  _score++;
+  drawScore();
+  updateRogue(rogueUpDown, rogueLeftRight);
+}
+
+void helpScreen() {
   
-  display.display();
+}
+
+void gameoverScreen() {
+  int16_t x1, y1, x2, y2;
+  uint16_t textWidth1, textHeight1, textWidth2, textHeight2;
+  char title1[] = "GAME";
+  char title2[] = "OVER";
+
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.getTextBounds(title1, 0, 0, &x1, &y1, &textWidth1, &textHeight1);
+  display.getTextBounds(title2, 0, 0, &x2, &y2, &textWidth2, &textHeight2);
+
+  display.setCursor(SCREEN_WIDTH / 2 - textWidth2 / 2, SCREEN_HEIGHT / 2 - textHeight2 / 2);
+  display.print(title2);
+  display.setCursor(SCREEN_WIDTH / 2 - textWidth1 / 2, SCREEN_HEIGHT / 2 - textHeight2 / 2 - textHeight1);
+  display.println(title1);
+
+  drawScore();
+  drawBottomRightText("Return to Menu");
+  
+  if (!_shieldButton.isActive()) {
+    _curState = START;
+    delay(500);
+  }
 }
 
 void updateAttack(int direction, int speed) {
   int pos = _attackStates[direction];
+  _attackStates[direction] += speed;
   if (pos < BLINK_END) {
     int blink_time = BLINK_END / 6;
     if ((pos < blink_time) || (pos > 2 * blink_time && pos < 3 * blink_time) || (pos > 4 * blink_time &&
@@ -188,7 +286,6 @@ void updateAttack(int direction, int speed) {
       drawAttackPartial(direction, 1);
     }
   }
-  _attackStates[direction] += speed;
 }
 
 void updateEarthquake(int speed) {
@@ -198,6 +295,9 @@ void updateEarthquake(int speed) {
   } else if ( _earthquakeState < QUAKE_END) {
     vibrationLevel = MAX_ANALOG_OUT;
   }
+  Serial.print(_earthquakeState);
+  Serial.print(" ");
+  Serial.println(vibrationLevel);
   analogWrite(VIBROMOTOR_OUTPUT_PIN, vibrationLevel);
   _earthquakeState += speed;
 }
@@ -251,8 +351,48 @@ void updateRogue(int upDown, int leftRight) {
       alive = false;
     }
   }
-  
+
   drawRogue(xPos, yPos, alive);
+  if (!alive) {
+    _curState = GAMEOVER;
+    display.display();
+    tone(OUTPUT_PIEZO_PIN, KEY_E);
+    delay(500);
+    tone(OUTPUT_PIEZO_PIN, KEY_D);
+    delay(500);
+    tone(OUTPUT_PIEZO_PIN, KEY_C);
+    delay(1000);
+    gameReset();
+  }
+}
+
+void gameReset() {
+  for (int i = 0; i<ATTACK_COUNT; i++) {
+    _attackStates[i] = 1000;
+  }
+  _earthquakeState = 1000;
+  analogWrite(VIBROMOTOR_OUTPUT_PIN, 0);
+  noTone(OUTPUT_PIEZO_PIN);
+}
+
+void drawScore() {
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.setCursor(0,0);
+  display.println("Score");
+  display.println((_score / 10) * 100);
+}
+
+void drawBottomRightText(char text[]) {
+  int16_t x, y;
+  uint16_t textWidth, textHeight;
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+  display.getTextBounds(text, 0, 0, &x, &y, &textWidth, &textHeight);
+
+  display.setCursor(SCREEN_WIDTH - textWidth, SCREEN_HEIGHT - textHeight);
+  display.print(text);
 }
 
 void drawShield() {
