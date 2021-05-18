@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Shape.hpp>;
+#include <ParallaxJoystick.hpp>;
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -17,6 +19,15 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // --------------------------------------------------------------------------
 
+// Joystick constants
+const int JOYSTICK_UPDOWN_PIN = A1;
+const int JOYSTICK_LEFTRIGHT_PIN = A0;
+const int MAX_ANALOG_VAL = 1023;
+const enum JoystickYDirection JOYSTICK_Y_DIR = RIGHT;
+const int UPPER_CUTOFF = 650;
+const int LOWER_CUTOFF = 350;
+
+// Screen and warning constants
 const int X_CENTER = SCREEN_WIDTH / 2;
 const int Y_CENTER = SCREEN_HEIGHT / 2;
 const int LEFT_EDGE = X_CENTER - SCREEN_HEIGHT / 2;
@@ -25,17 +36,24 @@ const int CORNER_WARNING_LINE_LENGTH = 14;
 const int EDGE_WARNING_LINE_LENGTH = 18;
 const int WARNING_THICKNESS = 4;
 
+// Attack animation constants
 const int ATTACK_COUNT = 4;
 const int BLINK_END = 300;
 const int PAUSE_END = 500;
 const int ATTACK_END = 800;
 const int ATTACK_EDGE_LENGTH = 30;
 
+// Rogue position constants
+const int R_OFFSET = SCREEN_HEIGHT / 4;
+const int R_PARTIAL_OFFSET = (R_OFFSET * 7) / 10; // approximating 0.7x for sqrt 2 for pythagorean theorem
+
 enum GAME_STATE {
   START,
   PLAY,
   HELP
 };
+
+ParallaxJoystick _analogJoystick(JOYSTICK_UPDOWN_PIN, JOYSTICK_LEFTRIGHT_PIN, MAX_ANALOG_VAL, JOYSTICK_Y_DIR);
 
 GAME_STATE _curState = START;
 
@@ -74,19 +92,6 @@ void loop() {
 
   display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE); // draw game border
 
-/*
-  drawUpLeftWarning();
-  drawUpRightWarning();
-  drawDownLeftWarning();
-  drawDownRightWarning();
-
-  if (_curState == PLAY) {
-    drawUpWarning();
-  }
-  drawDownWarning();
-  drawLeftWarning();
-  drawRightWarning();
-  */
   int i = 0;
   while (i <= 3) {
     if (_attackStates[i] < ATTACK_END) {
@@ -100,16 +105,27 @@ void loop() {
       _attackStates[j] = 0;
     }
   }
-  /*
-  drawAttackPartial(0, 0);
-  drawAttackPartial(0, 1);
-  drawAttackPartial(1, 0);
-  drawAttackPartial(1, 1);
-  drawAttackPartial(2, 0);
-  drawAttackPartial(2, 1);
-  drawAttackPartial(3, 0);
-  drawAttackPartial(3, 1);
-  */
+
+  _analogJoystick.read();
+  int rogueUpDown = 0;
+  int rogueLeftRight = 0;
+  int upDownVal = _analogJoystick.getUpDownVal();
+  int leftRightVal = _analogJoystick.getLeftRightVal();
+  if (upDownVal > UPPER_CUTOFF) {
+    rogueUpDown = 1;
+  } else if (upDownVal < LOWER_CUTOFF) {
+    rogueUpDown = -1;
+  }
+  if (leftRightVal > UPPER_CUTOFF) {
+    rogueLeftRight = 1;
+  } else if (leftRightVal < LOWER_CUTOFF) {
+    rogueLeftRight = -1;
+  }
+  Serial.print(rogueUpDown);
+  Serial.print(" ");
+  Serial.println(rogueLeftRight);
+  updateRogue(rogueUpDown, rogueLeftRight);
+  
   display.display();
 }
 
@@ -142,6 +158,48 @@ void updateAttack(int direction, int speed) {
     }
   }
   _attackStates[direction] += speed;
+}
+
+void updateRogue(int upDown, int leftRight) {
+  int xPos = X_CENTER;
+  int yPos = Y_CENTER;
+  bool alive = true;
+  
+  // Calculate rogue x position
+  if (leftRight == 1) { // go right
+    if (upDown == 0) {
+      xPos = X_CENTER + R_OFFSET; 
+    } else {
+      xPos = X_CENTER + R_PARTIAL_OFFSET;
+    }
+  } else if (leftRight == -1) { // go left
+    if (upDown == 0) {
+      xPos = X_CENTER - R_OFFSET; 
+    } else {
+      xPos = X_CENTER - R_PARTIAL_OFFSET;
+    }
+  }
+
+  // Calculate rogue y position
+  if (upDown == 1) { // go up
+    if (leftRight == 0) {
+      yPos = Y_CENTER - R_OFFSET; 
+    } else {
+      yPos = Y_CENTER - R_PARTIAL_OFFSET;
+    }
+  } else if (upDown == -1) { // go down
+    if (leftRight == 0) {
+      yPos = Y_CENTER + R_OFFSET; 
+    } else {
+      yPos = Y_CENTER + R_PARTIAL_OFFSET;
+    }
+  }
+  
+  drawRogue(xPos, yPos, true);
+}
+
+void drawRogue(int x, int y, bool alive) {
+  display.fillRect(x - 5, y - 5, 10, 10, SSD1306_WHITE);
 }
 
 void drawAttackPartial(int direction, int offset) {
