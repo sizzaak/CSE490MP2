@@ -30,6 +30,12 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Speaker constants
 const int OUTPUT_PIEZO_PIN = 12;
+const int SONG_NOTES = 20;
+const int NOTE_LENGTH = 200;
+const int PAUSE_LENGTH = 100;
+const int SONG[SONG_NOTES] = {KEY_E, KEY_E, KEY_E, KEY_F, KEY_G, KEY_E, KEY_E, KEY_E, KEY_D, KEY_C,
+                              KEY_E, KEY_E, KEY_E, KEY_F, KEY_G, KEY_G, KEY_E, KEY_F, KEY_D, KEY_C};
+const int SONG_LENGTH = (NOTE_LENGTH + PAUSE_LENGTH) * SONG_NOTES;
 
 // Button constants
 const int SHIELD_BUTTON_PIN = 10;
@@ -92,6 +98,7 @@ GAME_STATE _curState = START;
 int _attackStates[ATTACK_COUNT];
 int _earthquakeState;
 int _score;
+long _musicStart;
 
 void setup() {
   // The following OLED setup taken from the ssd1306_128x64_i2c library example
@@ -148,6 +155,7 @@ void startScreen() {
   display.println(title1);
 
   drawBottomRightText("Start");
+  playMusic();
 
   if (!_shieldButton.isActive()) {
     _curState = PLAYSTART;
@@ -366,11 +374,25 @@ void updateRogue(int upDown, int leftRight) {
   }
 }
 
+void playMusic() {
+  long time = millis();
+  if (_musicStart == 0 || time - _musicStart > SONG_LENGTH) {
+    _musicStart = time;
+  }
+  long musicSeconds = time - _musicStart;
+  if (musicSeconds % (NOTE_LENGTH + PAUSE_LENGTH) > NOTE_LENGTH) {
+    noTone(OUTPUT_PIEZO_PIN);
+  } else {
+    tone(OUTPUT_PIEZO_PIN, SONG[musicSeconds / (NOTE_LENGTH + PAUSE_LENGTH)]);
+  }
+}
+
 void gameReset() {
   for (int i = 0; i<ATTACK_COUNT; i++) {
     _attackStates[i] = 1000;
   }
   _earthquakeState = 1000;
+  _musicStart = 0;
   analogWrite(VIBROMOTOR_OUTPUT_PIN, 0);
   noTone(OUTPUT_PIEZO_PIN);
 }
