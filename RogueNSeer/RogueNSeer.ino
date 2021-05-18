@@ -5,6 +5,7 @@
 #include <Adafruit_SSD1306.h>
 #include <Shape.hpp>;
 #include <ParallaxJoystick.hpp>;
+#include <PushButton.h>
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -19,9 +20,16 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // --------------------------------------------------------------------------
 
+// Button constants
+const int SHIELD_BUTTON_PIN = 10;
+
 // Vibromotor constants
 const int VIBROMOTOR_OUTPUT_PIN = 5;
 const int MAX_ANALOG_OUT = 255;
+
+// Earthquake constants
+const int WARN_END = 500;
+const int QUAKE_END = 800;
 
 // Joystick constants
 const int JOYSTICK_UPDOWN_PIN = A1;
@@ -58,6 +66,7 @@ enum GAME_STATE {
 };
 
 ParallaxJoystick _analogJoystick(JOYSTICK_UPDOWN_PIN, JOYSTICK_LEFTRIGHT_PIN, MAX_ANALOG_VAL, JOYSTICK_Y_DIR);
+PushButton _shieldButton(SHIELD_BUTTON_PIN);
 
 GAME_STATE _curState = START;
 
@@ -82,13 +91,13 @@ void setup() {
   }
   // --------------------------------------------------------------------------
 
-  for (int i = 0; i++; i<ATTACK_COUNT) {
+  pinMode(VIBROMOTOR_OUTPUT_PIN, OUTPUT);
+  pinMode(SHIELD_BUTTON_PIN, INPUT_PULLUP);
+  
+  for (int i = 0; i<ATTACK_COUNT; i++) {
     _attackStates[i] = 1000;
   }
-  _attackStates[0] = 0;
-  _attackStates[1] = 0;
-  _attackStates[2] = 0;
-  _attackStates[3] = 0;
+  _earthquakeState = 1000;
   display.clearDisplay();
 }
 
@@ -97,19 +106,35 @@ void loop() {
 
   display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE); // draw game border
 
+  Serial.print(_attackStates[0]);
+  Serial.print(" ");
+  Serial.print(_attackStates[1]);
+  Serial.print(" ");
+  Serial.print(_attackStates[2]);
+  Serial.print(" ");
+  Serial.print(_attackStates[3]);
+  Serial.print(" ");
+  Serial.println(_earthquakeState);
   int i = 0;
   while (i <= 3) {
     if (_attackStates[i] < ATTACK_END) {
-      updateAttack(i, 5);
+      updateAttack(i, 10);
       break;
     }
     i++;
   }
-  if (i == 4) {
-    for (int j = 0; j < ATTACK_COUNT; j++) {
+  if (_earthquakeState > QUAKE_END) {
+    i++;
+  }
+  if (i == 5) { // no attacks active
+    int j = random(0, 5);
+    if (j == 4) {
+      _earthquakeState = 0;
+    } else {
       _attackStates[j] = 0;
     }
   }
+  Serial.println(i);
 
   _analogJoystick.read();
   int rogueUpDown = 0;
@@ -126,10 +151,11 @@ void loop() {
   } else if (leftRightVal < LOWER_CUTOFF) {
     rogueLeftRight = -1;
   }
-  Serial.print(rogueUpDown);
-  Serial.print(" ");
-  Serial.println(rogueLeftRight);
+  updateEarthquake(10);
   updateRogue(rogueUpDown, rogueLeftRight);
+  if (!_shieldButton.isActive()) {
+    drawShield();
+  }
   
   display.display();
 }
@@ -163,6 +189,17 @@ void updateAttack(int direction, int speed) {
     }
   }
   _attackStates[direction] += speed;
+}
+
+void updateEarthquake(int speed) {
+  int vibrationLevel = 0;
+  if (_earthquakeState < WARN_END) {
+    vibrationLevel = map(_earthquakeState, 0, WARN_END, MAX_ANALOG_OUT / 2, (MAX_ANALOG_OUT * 3) / 4);
+  } else if ( _earthquakeState < QUAKE_END) {
+    vibrationLevel = MAX_ANALOG_OUT;
+  }
+  analogWrite(VIBROMOTOR_OUTPUT_PIN, vibrationLevel);
+  _earthquakeState += speed;
 }
 
 void updateRogue(int upDown, int leftRight) {
@@ -209,8 +246,17 @@ void updateRogue(int upDown, int leftRight) {
       (leftRight == -upDown && attackActive[2]) || (leftRight == upDown && attackActive[3])) {
         alive = false;
   }
+  if (_earthquakeState > WARN_END && _earthquakeState < QUAKE_END) {
+    if (_shieldButton.isActive() || upDown != 0 || leftRight != 0) {
+      alive = false;
+    }
+  }
   
   drawRogue(xPos, yPos, alive);
+}
+
+void drawShield() {
+  display.drawCircle(X_CENTER, Y_CENTER, (R_OFFSET * 3) / 4, SSD1306_WHITE);
 }
 
 void drawRogue(int x, int y, bool alive) {
