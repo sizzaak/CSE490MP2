@@ -39,6 +39,7 @@ const int SONG_LENGTH = (NOTE_LENGTH + PAUSE_LENGTH) * SONG_NOTES;
 
 // Button constants
 const int SHIELD_BUTTON_PIN = 10;
+const int SELECT_BUTTON_PIN = 8;
 
 // Vibromotor constants
 const int VIBROMOTOR_OUTPUT_PIN = 6;
@@ -76,6 +77,8 @@ const int ATTACK_EDGE_LENGTH = 30;
 const int R_OFFSET = SCREEN_HEIGHT / 4;
 const int R_PARTIAL_OFFSET = (R_OFFSET * 7) / 10; // approximating 0.7x for sqrt 2 for pythagorean theorem
 
+const int PAGE_COUNT = 4;
+
 enum GAME_STATE {
   START,
   PLAYSTART,
@@ -86,6 +89,7 @@ enum GAME_STATE {
 
 ParallaxJoystick _analogJoystick(JOYSTICK_UPDOWN_PIN, JOYSTICK_LEFTRIGHT_PIN, MAX_ANALOG_VAL, JOYSTICK_Y_DIR);
 PushButton _shieldButton(SHIELD_BUTTON_PIN);
+PushButton _selectButton(SELECT_BUTTON_PIN);
 
 GAME_STATE _curState = START;
 
@@ -97,8 +101,9 @@ GAME_STATE _curState = START;
 */
 int _attackStates[ATTACK_COUNT];
 int _earthquakeState;
-int _score;
+long _score;
 long _musicStart;
+int _pageNumber = 1;
 
 void setup() {
   // The following OLED setup taken from the ssd1306_128x64_i2c library example
@@ -115,6 +120,7 @@ void setup() {
   pinMode(VIBROMOTOR_OUTPUT_PIN, OUTPUT);
   pinMode(OUTPUT_PIEZO_PIN, OUTPUT);
   pinMode(SHIELD_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SELECT_BUTTON_PIN, INPUT_PULLUP);
   
   gameReset();
   display.clearDisplay();
@@ -122,6 +128,8 @@ void setup() {
 
 void loop() {
   display.clearDisplay();
+  _shieldButton.update();
+  _selectButton.update();
 
   if (_curState == PLAY) {
     playScreen();
@@ -155,10 +163,15 @@ void startScreen() {
   display.println(title1);
 
   drawBottomRightText("Start");
+  drawBottomLeftText("How to Play");
   playMusic();
 
-  if (!_shieldButton.isActive()) {
+  if (_shieldButton.isClicked()) {
     _curState = PLAYSTART;
+    noTone(OUTPUT_PIEZO_PIN);
+  } else if (_selectButton.isClicked()) {
+    _curState = HELP;
+    noTone(OUTPUT_PIEZO_PIN);
   }
 }
 
@@ -191,24 +204,35 @@ void playstartScreen() {
 
 void playScreen() {
   display.drawRect(LEFT_EDGE, 0, RIGHT_EDGE - LEFT_EDGE, SCREEN_HEIGHT, SSD1306_WHITE); // draw game border
+
+  bool attacksActive = false;
+  int speed = 8 + _score / 400;
   
-  int i = 0;
-  while (i <= 3) {
+  for (int i = 0; i < 4; i++) {
     if (_attackStates[i] < ATTACK_END) {
-      updateAttack(i, 10);
-      break;
+      updateAttack(i, speed);
+      attacksActive = true;
     }
-    i++;
   }
-  if (_earthquakeState > QUAKE_END) {
-    i++;
+  updateEarthquake(speed);
+  if (_earthquakeState < QUAKE_END) {
+    attacksActive = true;
   }
-  if (i == 5) { // no attacks active
+  
+  if (!attacksActive) { // no attacks active
     int j = random(0, 5);
     if (j == 4) {
       _earthquakeState = 0;
     } else {
       _attackStates[j] = 0;
+    }
+    if (_score > 1000 && j != 4) {
+      int k = random(0, 4);
+      _attackStates[k] = 0;
+      if (_score > 2000) {
+        int l = random(0, 4);
+        _attackStates[l] = 0;
+      }
     }
   }
 
@@ -227,7 +251,6 @@ void playScreen() {
   } else if (leftRightVal < LOWER_CUTOFF) {
     rogueLeftRight = -1;
   }
-  updateEarthquake(10);
   if (!_shieldButton.isActive()) {
     drawShield();
   }
@@ -237,7 +260,43 @@ void playScreen() {
 }
 
 void helpScreen() {
-  
+  if (_pageNumber == 1) {
+    drawBottomLeftText("Menu");
+    if (_selectButton.isClicked()) {
+      _curState = START;
+    }
+  } else {
+    drawBottomLeftText("Back");
+    if (_selectButton.isClicked()) {
+      _pageNumber--;
+    }
+  }
+  if (_pageNumber == PAGE_COUNT) {
+    drawBottomRightText("Menu");
+    if (_shieldButton.isClicked()) {
+      _pageNumber = 1;
+      _curState = START;
+    }
+  } else {
+    drawBottomRightText("Next");
+    if (_shieldButton.isClicked()) {
+      _pageNumber++;
+    }
+  }
+
+  if (_pageNumber == 1) {
+    drawHelpPage("Welcome to Rogue & Seer! This an asymmetrical two-player game where only one"
+                 " player can see incoming attacks.");
+  } else if (_pageNumber == 2) {
+    drawHelpPage("The player holding the screen is the Seer. This player must see which directions"
+                 " attacks are coming from and tell the rogue which way to move.");
+  } else if (_pageNumber == 3) {
+    drawHelpPage("The player with the joystick is the Rogue. They must follow directions from the"
+                 " Seer to avoid incoming attacks without looking at the screen.");
+  } else if (_pageNumber == 4) {
+    drawHelpPage("If the rogue feels vibration, an earthquake is coming! The rogue must not move and "
+                 "must warn the Seer, who must hold the right button to shield.");
+  }
 }
 
 void gameoverScreen() {
@@ -259,9 +318,8 @@ void gameoverScreen() {
   drawScore();
   drawBottomRightText("Return to Menu");
   
-  if (!_shieldButton.isActive()) {
+  if (_shieldButton.isClicked()) {
     _curState = START;
-    delay(500);
   }
 }
 
@@ -405,6 +463,13 @@ void drawScore() {
   display.println((_score / 10) * 100);
 }
 
+void drawHelpPage(char text[]) {
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.setCursor(0, 0);
+  display.println(text);
+}
+
 void drawBottomRightText(char text[]) {
   int16_t x, y;
   uint16_t textWidth, textHeight;
@@ -414,6 +479,18 @@ void drawBottomRightText(char text[]) {
   display.getTextBounds(text, 0, 0, &x, &y, &textWidth, &textHeight);
 
   display.setCursor(SCREEN_WIDTH - textWidth, SCREEN_HEIGHT - textHeight);
+  display.print(text);
+}
+
+void drawBottomLeftText(char text[]) {
+  int16_t x, y;
+  uint16_t textWidth, textHeight;
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+  display.getTextBounds(text, 0, 0, &x, &y, &textWidth, &textHeight);
+
+  display.setCursor(0, SCREEN_HEIGHT - textHeight);
   display.print(text);
 }
 
